@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <RootNamespace>HashDoc</RootNamespace>
+    <AssemblyName>HashDoc</AssemblyName>
+    <AssemblyTitle>识档 HashDoc</AssemblyTitle>
+    <Product>识档 HashDoc</Product>
+    <Description>基于 SHA-256 的图纸档案绿色管理工具</Description>
+    <Version>1.0.4</Version>
+    <FileVersion>1.0.4</FileVersion>
+    <InformationalVersion>1.0.4</InformationalVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 让没有装 .NET Framework 4.8 开发包的机器也能编译 net48 -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.119" />
+  </ItemGroup>
+
+</Project>

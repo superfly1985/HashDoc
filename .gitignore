@@ -1,0 +1,13 @@
+bin/
+obj/
+out/
+dist/
+*.db
+selftest_result.txt
+*.log
+
+# 一次性种子数据（含公司真实供应商/零件号，不进代码库）
+file-list.csv
+
+# 本地工作记录，非源码
+.workbuddy/
