@@ -63,7 +63,7 @@ namespace HashDoc
         static int DbInfo()
         {
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine("程序版本：" + UiUtil.AppVersion());
+            sb.AppendLine("程序版本：" + UiUtil.AppVersion() + UiUtil.CommitInfo());
             sb.AppendLine("程序目录：" + AppDomain.CurrentDomain.BaseDirectory);
             try
             {

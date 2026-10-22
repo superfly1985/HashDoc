@@ -173,10 +173,32 @@ namespace HashDoc
                 var attr = (System.Reflection.AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
                     asm, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
                 if (attr != null && !string.IsNullOrEmpty(attr.InformationalVersion))
-                    return attr.InformationalVersion;
+                {
+                    // 有 git 仓库时 SDK 会把提交哈希拼在版本号后（如 1.0.5+f6c717b），界面只显示纯版本号
+                    var v = attr.InformationalVersion;
+                    int i = v.IndexOf('+');
+                    return i > 0 ? v.Substring(0, i) : v;
+                }
                 return asm.GetName().Version.ToString(3);
             }
             catch { return "?"; }
+        }
+
+        /// <summary>提交哈希短码（前 8 位）；没有 git 信息时返回空串。--dbinfo 排障用。</summary>
+        public static string CommitInfo()
+        {
+            try
+            {
+                var asm = typeof(UiUtil).Assembly;
+                var attr = (System.Reflection.AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
+                    asm, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
+                var v = attr?.InformationalVersion ?? "";
+                int i = v.IndexOf('+');
+                if (i <= 0) return "";
+                var sha = v.Substring(i + 1);
+                return sha.Length == 0 ? "" : "（commit " + sha.Substring(0, Math.Min(8, sha.Length)) + "）";
+            }
+            catch { return ""; }
         }
 
         public static void ShowError(IWin32Window owner, string title, Exception ex)

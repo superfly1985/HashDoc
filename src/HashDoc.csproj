@@ -11,9 +11,9 @@
     <AssemblyTitle>识档 HashDoc</AssemblyTitle>
     <Product>识档 HashDoc</Product>
     <Description>基于 SHA-256 的图纸档案绿色管理工具</Description>
-    <Version>1.0.4</Version>
-    <FileVersion>1.0.4</FileVersion>
-    <InformationalVersion>1.0.4</InformationalVersion>
+    <Version>1.0.5</Version>
+    <FileVersion>1.0.5</FileVersion>
+    <InformationalVersion>1.0.5</InformationalVersion>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -25,6 +25,20 @@
     <!-- 让没有装 .NET Framework 4.8 开发包的机器也能编译 net48 -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Include="System.Data.SQLite.Core" Version="1.0.119" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- PDF 预览走 Windows 自带的渲染引擎（Windows.Data.Pdf），运行时不带任何 DLL。
+         winmd 来自 Windows SDK；本机没有 SDK 时这一行会编译失败，删掉它 + 删 PdfRender.cs 即可回到无预览版本。 -->
+    <Reference Include="Windows">
+      <HintPath>$(MSBuildProgramFiles32)\Windows Kits\10\UnionMetadata\10.0.26100.0\Windows.winmd</HintPath>
+      <IsWinMDFile>true</IsWinMDFile>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Runtime.WindowsRuntime">
+      <HintPath>$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\System.Runtime.WindowsRuntime\v4.0_4.0.0.0__b77a5c561934e089\System.Runtime.WindowsRuntime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
 </Project>

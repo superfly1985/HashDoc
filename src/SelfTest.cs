@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace HashDoc
 {
@@ -235,6 +237,39 @@ namespace HashDoc
                     !File.Exists(Path.Combine(root, "测试供应商", "手工拷入_1.pdf")));
                 Check("直接登记后路径保持原样",
                     FileRepo.GetByHash(HashService.Sha256(inside)).CurrentPath == inside);
+
+                // 16. PDF 内嵌预览：系统渲染器能读、能渲染；坏文件只降级不抛
+                string pdfPath = Path.Combine(inbox, "real.pdf");
+                File.WriteAllBytes(pdfPath, MakePdf());
+
+                IPdfRender pdf = null;
+                string pdfErr = null;
+                bool pdfOk = Task.Run(() => { pdf = PdfRenderFactory.TryLoad(pdfPath, out pdfErr); })
+                                 .Wait(20000);
+                Check("PDF 渲染器可加载", pdfOk && pdf != null && pdf.PageCount == 1,
+                    pdfErr ?? (pdfOk ? "" : "超时"));
+                Check("PDF 页面尺寸可读", pdf != null && pdf.PageSize(0).Width > 500);
+
+                Bitmap pageBmp = null;
+                string renderErr = null;
+                if (pdf != null)
+                    Task.Run(() =>
+                    {
+                        try { pageBmp = pdf.Render(0, 600); }
+                        catch (Exception ex) { renderErr = ex.Message; }
+                    }).Wait(20000);
+                Check("PDF 首页渲染成位图（宽度≥请求值，受系统 DPI 放大）",
+                    pageBmp != null && pageBmp.Width >= 600 && pageBmp.Height > 0,
+                    pageBmp == null ? renderErr : (pageBmp.Width + "x" + pageBmp.Height));
+                Check("PDF 渲染有实际内容（非空白）", pageBmp != null && BitmapHasInk(pageBmp));
+
+                string badErr = null;
+                bool badOk = Task.Run(() => { var bad = PdfRenderFactory.TryLoad(src, out badErr); })
+                                  .Wait(20000);
+                Check("损坏/非 PDF 文件只降级不抛异常", badOk && !string.IsNullOrEmpty(badErr), badErr);
+
+                if (pdf != null) pdf.Dispose();
+                if (pageBmp != null) pageBmp.Dispose();
             }
             catch (Exception ex)
             {
@@ -268,6 +303,51 @@ namespace HashDoc
             var b = new byte[n];
             rnd.NextBytes(b);
             return b;
+        }
+
+        /// <summary>手拼一个最小合法 PDF（1 页 / A4 / Helvetica 文本），用于 PDF 预览自检。</summary>
+        static byte[] MakePdf()
+        {
+            var ms = new MemoryStream();
+            var off = new List<long>();
+
+            void W(string s)
+            {
+                var b = Encoding.ASCII.GetBytes(s);
+                ms.Write(b, 0, b.Length);
+            }
+            void Obj(int num, string body)
+            {
+                off.Add(ms.Position);
+                W(num + " 0 obj\n" + body + "\nendobj\n");
+            }
+
+            W("%PDF-1.4\n");
+            Obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+            Obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+            Obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] " +
+                   "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>");
+            string content = "BT /F1 36 Tf 60 700 Td (HashDoc PDF Test) Tj ET";
+            Obj(4, "<< /Length " + content.Length + " >>\nstream\n" + content + "\nendstream");
+            Obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+            long xref = ms.Position;
+            W("xref\n0 6\n0000000000 65535 f \n");
+            foreach (var o in off) W(o.ToString("D10") + " 00000 n \n");
+            W("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n");
+            return ms.ToArray();
+        }
+
+        /// <summary>抽查像素里有没有墨迹，防止"渲染出全白图也算成功"。</summary>
+        static bool BitmapHasInk(Bitmap bmp)
+        {
+            for (int y = 0; y < bmp.Height; y += 3)
+                for (int x = 0; x < bmp.Width; x += 3)
+                {
+                    var c = bmp.GetPixel(x, y);
+                    if (c.R < 180 && c.G < 180 && c.B < 180) return true;
+                }
+            return false;
         }
     }
 }
