@@ -206,6 +206,48 @@ namespace HashDoc
             return list;
         }
 
+        /// <summary>
+        /// 把某个目录（及可选子目录）下所有档案的文档类型统一改成 type。
+        /// 用前缀匹配而不是 LIKE，避免目录名里出现 % _ 之类的字符时误伤。
+        /// 返回实际更新的行数（类型已是目标值的行不算）。
+        /// </summary>
+        public static int UpdateDocTypeUnder(string dir, string type, bool recursive)
+        {
+            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(type)) return 0;
+            string prefix = dir.TrimEnd('\\') + "\\";
+            int L = prefix.Length;
+            // @l1 = 前缀长度+1：substr 从这里取的是"前缀之后"的部分；
+            // 非递归时要求这部分里没有 \（文件直接在该目录下，而不是子目录里）
+            var ps = SqlArgs.P("@t", type, "@p", prefix, "@l", L, "@l1", L + 1);
+            string sql = "UPDATE FileInfo SET DocType=@t " +
+                         "WHERE lower(substr(CurrentPath,1,@l))=lower(@p)";
+            if (!recursive)
+                sql += " AND instr(substr(CurrentPath,@l1), '\\')=0 AND substr(CurrentPath,@l1)<>''";
+            return Db.Exec(sql, ps);
+        }
+
+        /// <summary>某个目录（及可选子目录）下的档案数与其中类型不是 type 的行数（确认框预览用）。</summary>
+        public static void CountUnderForType(string dir, string type, bool recursive, out int total, out int changeable, out int already)
+        {
+            total = changeable = already = 0;
+            if (string.IsNullOrEmpty(dir)) return;
+            string prefix = dir.TrimEnd('\\') + "\\";
+            int L = prefix.Length;
+            var ps = SqlArgs.P("@p", prefix, "@l", L, "@l1", L + 1);
+            string sql = "SELECT DocType FROM FileInfo " +
+                         "WHERE lower(substr(CurrentPath,1,@l))=lower(@p)";
+            if (!recursive)
+                sql += " AND instr(substr(CurrentPath,@l1), '\\')=0 AND substr(CurrentPath,@l1)<>''";
+            var t = Db.Query(sql, ps);
+            foreach (DataRow r in t.Rows)
+            {
+                total++;
+                var v = (r["DocType"] as string ?? "").Trim();
+                if (string.Equals(v, type, StringComparison.OrdinalIgnoreCase)) already++;
+                else changeable++;
+            }
+        }
+
         static List<CodeEntry> LoadCodes(string hash)
         {
             var list = new List<CodeEntry>();
@@ -347,6 +389,51 @@ namespace HashDoc
         public static string EscapeLike(string s)
         {
             return s.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+        }
+    }
+
+    /// <summary>目录快照（库结构 v4）：目录路径 → 修改时间。启动时的增量检查拿它做剪枝。</summary>
+    public static class DirStateRepo
+    {
+        /// <summary>读出全部快照。路径按写入时的原始大小写存储，比对时忽略大小写由调用方处理。</summary>
+        public static Dictionary<string, string> Load()
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var t = Db.Query("SELECT DirPath, MTime FROM DirState");
+            foreach (DataRow r in t.Rows)
+            {
+                string p = r["DirPath"] as string;
+                string m = r["MTime"] as string;
+                if (!string.IsNullOrEmpty(p) && !string.IsNullOrEmpty(m)) map[p] = m;
+            }
+            return map;
+        }
+
+        /// <summary>整体替换快照（调用方一次给全部归档目录树）。一个事务写完，几万行也是毫秒级。</summary>
+        public static void SaveAll(IEnumerable<KeyValuePair<string, string>> states)
+        {
+            Db.Exec("BEGIN");
+            try
+            {
+                Db.Exec("DELETE FROM DirState");
+                Db.Exec("CREATE TEMP TABLE IF NOT EXISTS _ds(DirPath TEXT PRIMARY KEY, MTime TEXT NOT NULL)");
+                Db.Exec("DELETE FROM _ds");
+                int i = 0;
+                foreach (var kv in states)
+                {
+                    Db.Exec("INSERT INTO _ds(DirPath, MTime) VALUES(@p, @m)",
+                        SqlArgs.P("@p", kv.Key, "@m", kv.Value));
+                    i++;
+                }
+                Db.Exec("INSERT OR REPLACE INTO DirState(DirPath, MTime) SELECT DirPath, MTime FROM _ds");
+                Db.Exec("DROP TABLE IF EXISTS _ds");
+                Db.Exec("COMMIT");
+            }
+            catch
+            {
+                try { Db.Exec("ROLLBACK"); } catch { }
+                throw;
+            }
         }
     }
 }

@@ -353,6 +353,7 @@ namespace HashDoc
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 try
                 {
+                    Db.Checkpoint();
                     using (var dest = new SQLiteConnection("Data Source=" + dlg.FileName + ";Version=3;"))
                     {
                         dest.Open();

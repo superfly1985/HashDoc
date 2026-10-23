@@ -270,6 +270,79 @@ namespace HashDoc
 
                 if (pdf != null) pdf.Dispose();
                 if (pageBmp != null) pageBmp.Dispose();
+
+                // 17. 启动增量检查的目录剪枝：稳态不报、只进变过的目录、移动不算新文件
+                string dirA = Path.Combine(root, "测试供应商", "A");
+                string dirSub = Path.Combine(dirA, "sub");
+                string dirB = Path.Combine(root, "测试供应商", "B");
+                Directory.CreateDirectory(dirSub);
+                Directory.CreateDirectory(dirB);
+                string f1 = Path.Combine(dirA, "f1.pdf");
+                string f2 = Path.Combine(dirB, "f2.pdf");
+                string f3 = Path.Combine(dirSub, "f3.pdf");
+                File.WriteAllBytes(f1, MakeBytes(20481));
+                File.WriteAllBytes(f2, MakeBytes(20482));
+                File.WriteAllBytes(f3, MakeBytes(20483));
+                var rAll = ImportCore.ImportAsync(new List<string> { f1, f2, f3 },
+                    new ImportOptions { Supplier = "测试供应商", DocType = "PPAP" }, null, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                Check("三个测试文件已入库", rAll.Count == 3 && rAll.All(x => x.Success));
+
+                // 把目录时间戳拨回 10 分钟前，让"快照后发生的变化"一定超过 ±2 秒容差
+                DateTime past = DateTime.Now.AddMinutes(-10);
+                Directory.SetLastWriteTime(dirA, past);
+                Directory.SetLastWriteTime(dirSub, past);
+                Directory.SetLastWriteTime(dirB, past);
+
+                Dictionary<string, string> snap1;
+                var s0 = ScanCore.ScanForNewFiles(new[] { root }, null, null, CancellationToken.None, out snap1);
+                Check("首次快照（全部目录都算变化）无新文件报告", s0.Rows.Count == 0 && snap1.Count > 0,
+                    "rows=" + s0.Rows.Count + " dirs=" + snap1.Count);
+
+                Dictionary<string, string> snap2;
+                var ck1 = ScanCore.ScanForNewFiles(new[] { root }, snap1, null, CancellationToken.None, out snap2);
+                Check("稳态剪枝：目录没变就不碰文件、不报新文件", ck1.Rows.Count == 0);
+
+                string fNew = Path.Combine(dirA, "fNew.pdf");
+                File.WriteAllBytes(fNew, MakeBytes(5120));
+                File.Move(f1, Path.Combine(dirA, "f1x.pdf"));
+                Dictionary<string, string> snap3;
+                var ck2 = ScanCore.ScanForNewFiles(new[] { root }, snap2, null, CancellationToken.None, out snap3);
+                Check("剪枝只报真正的新文件",
+                    ck2.Rows.Count == 1 && ck2.Rows[0].Category == ScanCategory.Unregistered &&
+                    ck2.Rows[0].FilePath == fNew,
+                    "rows=" + ck2.Rows.Count);
+                Check("已入库文件改名（同内容）不算新文件", !ck2.Rows.Any(r => r.FilePath.EndsWith("f1x.pdf")));
+
+                // 全量扫描：移动要被识别为路径变更，且快照要落库
+                var fullOut = ScanCore.ScanAsync(new[] { root }, false, null, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                Check("全量扫描识别改名", fullOut.Rows.Exists(x => x.Category == ScanCategory.PathChanged &&
+                    x.FilePath == Path.Combine(dirA, "f1x.pdf")));
+                var savedStates = DirStateRepo.Load();
+                Check("全量扫描后目录快照已落库", savedStates.ContainsKey(dirA) && savedStates.ContainsKey(root));
+
+                // 18. 按文件夹统一指定类型（含/不含子文件夹）
+                string f1x = Path.Combine(dirA, "f1x.pdf");
+                int nUpd = FileRepo.UpdateDocTypeUnder(dirA, "BMG", true);
+                Check("含子文件夹批量指定类型", nUpd == 2,
+                    FileRepo.GetByHash(HashService.Sha256(f1x)).DocType + "/" +
+                    FileRepo.GetByHash(HashService.Sha256(f3)).DocType);
+                int tT, tC, tA;
+                FileRepo.CountUnderForType(dirA, "BMG", true, out tT, out tC, out tA);
+                Check("类型预览计数正确", tT == 2 && tC == 0 && tA == 2, tT + "/" + tC + "/" + tA);
+
+                FileRepo.UpdateAttrs(HashService.Sha256(f1x),
+                    FileRepo.GetByHash(HashService.Sha256(f1x)).Supplier,
+                    "ELV", FileRepo.GetByHash(HashService.Sha256(f1x)).BmgNo);
+                int nUpd2 = FileRepo.UpdateDocTypeUnder(dirA, "BMG", false);
+                Check("不含子文件夹只动直接子文件", nUpd2 == 1 &&
+                    FileRepo.GetByHash(HashService.Sha256(f1x)).DocType == "BMG" &&
+                    FileRepo.GetByHash(HashService.Sha256(f3)).DocType == "BMG",
+                    "n=" + nUpd2);
+
+                // 19. 库结构 v4：DirState 表存在
+                Check("v4 迁移后库结构版本=4", Convert.ToInt64(Db.Scalar("PRAGMA user_version")) == 4);
             }
             catch (Exception ex)
             {

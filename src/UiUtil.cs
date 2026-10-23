@@ -165,6 +165,14 @@ namespace HashDoc
         }
 
         /// <summary>程序版本（取自程序集，发布时改 csproj 的 Version 即可）。</summary>
+        static ToolTip _tip;
+        /// <summary>给控件挂一条悬停提示（全程序共享一个 ToolTip 实例）。</summary>
+        public static void SetTip(Control c, string text)
+        {
+            if (_tip == null) _tip = new ToolTip();
+            _tip.SetToolTip(c, text);
+        }
+
         public static string AppVersion()
         {
             try

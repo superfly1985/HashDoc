@@ -11,9 +11,9 @@
     <AssemblyTitle>识档 HashDoc</AssemblyTitle>
     <Product>识档 HashDoc</Product>
     <Description>基于 SHA-256 的图纸档案绿色管理工具</Description>
-    <Version>1.0.5</Version>
-    <FileVersion>1.0.5</FileVersion>
-    <InformationalVersion>1.0.5</InformationalVersion>
+    <Version>1.0.6</Version>
+    <FileVersion>1.0.6</FileVersion>
+    <InformationalVersion>1.0.6</InformationalVersion>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <PlatformTarget>AnyCPU</PlatformTarget>

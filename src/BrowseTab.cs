@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace HashDoc
@@ -138,8 +139,16 @@ namespace HashDoc
             {
                 ReloadAll();
                 BeginInvoke(new Action(ApplyDefaultSplitters));
-                // 打开软件就自动检查一次：有人直接把文件拷进归档目录时，不用再手动扫描也能发现
-                BeginInvoke(new Action(AutoCheckNewFiles));
+                // 打开软件就自动检查一次：有人直接把文件拷进归档目录时，不用再手动扫描也能发现。
+                // 延后 3 秒（先让首屏和列表出来），并且走目录快照剪枝的增量检查——几万文件也只在秒级
+                var kickoff = new Timer { Interval = 3000 };
+                kickoff.Tick += delegate
+                {
+                    kickoff.Stop();
+                    kickoff.Dispose();
+                    AutoCheckNewFiles(true);
+                };
+                kickoff.Start();
             };
         }
 
@@ -196,7 +205,7 @@ namespace HashDoc
             var btnScan = UiUtil.Btn("扫描目录…", 96);
             btnScan.Click += delegate { OpenScan(); };
             var btnRefresh = UiUtil.Btn("刷新", 64);
-            btnRefresh.Click += delegate { ReloadAll(); AutoCheckNewFiles(); };
+            btnRefresh.Click += delegate { ReloadAll(); AutoCheckNewFiles(false); };
 
             // 启动时自动检查到的新文件：用这条橙色按钮提示，点一下直接进补入库（不弹模态框打断）
             _btnNew.Visible = false;
@@ -346,6 +355,27 @@ namespace HashDoc
                         tn.Nodes.Add(NodeFor(c));
                 }
             };
+            // 右键目录 → 统一指定该目录（及子目录）下所有档案的文档类型
+            var treeMenu = new ContextMenuStrip();
+            var miType = new ToolStripMenuItem("统一指定类型…");
+            treeMenu.Items.Add(miType);
+            _tree.ContextMenuStrip = treeMenu;
+            _tree.NodeMouseClick += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Right && e.Node != null) _tree.SelectedNode = e.Node;
+            };
+            treeMenu.Opening += (s, e) =>
+            {
+                var dn = (_tree.SelectedNode == null ? null : _tree.SelectedNode.Tag) as DirNode;
+                miType.Enabled = dn != null && !string.IsNullOrEmpty(dn.FullPath);
+            };
+            miType.Click += delegate
+            {
+                var dn = (_tree.SelectedNode == null ? null : _tree.SelectedNode.Tag) as DirNode;
+                if (dn == null || string.IsNullOrEmpty(dn.FullPath)) return;
+                OpenTypeAssign(dn);
+            };
+
             _tree.AfterSelect += (s, e) =>
             {
                 var dn = e.Node.Tag as DirNode;
@@ -810,7 +840,7 @@ namespace HashDoc
         /// 纯只读：路径变更、丢失、重复一律不动，那些交给【扫描目录】由用户确认。
         /// 结果不弹模态框打断，只点亮工具条上的橙色按钮 + 状态栏提示。
         /// </summary>
-        async void AutoCheckNewFiles()
+        async void AutoCheckNewFiles(bool pruned)
         {
             if (_autoChecking) return;
             var roots = ArchiveRoots.Paths();
@@ -818,12 +848,27 @@ namespace HashDoc
 
             _autoChecking = true;
             _btnNew.Visible = false;
-            _lblStatus.Text = "正在检查归档目录里的新文件…";
+            _lblStatus.Text = pruned ? "正在检查归档目录里的新文件…" : "正在核对归档目录（全量）…";
             try
             {
                 var prog = new Progress<ScanProgress>(p =>
-                    _lblStatus.Text = string.Format("正在检查归档目录里的新文件… {0}/{1}　{2}", p.Done, p.Total, p.Current));
-                var outp = await ScanCore.ScanAsync(roots, false, prog, System.Threading.CancellationToken.None);
+                    _lblStatus.Text = string.Format(
+                        (pruned ? "正在检查归档目录里的新文件… {0}/{1}　{2}" : "正在核对归档目录（全量）… {0}/{1}　{2}"),
+                        p.Done, p.Total, p.Current));
+                ScanOutput outp;
+                if (pruned)
+                {
+                    // 增量剪枝：只进"目录快照有变化"的目录，稳态几乎不碰磁盘文件
+                    outp = await Task.Run(delegate
+                    {
+                        return ScanCore.ScanForNewFiles(roots, prog, System.Threading.CancellationToken.None);
+                    });
+                }
+                else
+                {
+                    // 全量核对：兜底剪枝盲区（robocopy 刷时间戳等），结束时刷新快照
+                    outp = await ScanCore.ScanAsync(roots, false, prog, System.Threading.CancellationToken.None);
+                }
                 _newRows = outp.Rows.Where(r => r.Category == ScanCategory.Unregistered).ToList();
             }
             catch
@@ -842,6 +887,15 @@ namespace HashDoc
             int n = _newRows.Count;
             _btnNew.Visible = n > 0;
             if (n > 0) _btnNew.Text = "发现 " + n + " 个新文件 → 补入库";
+        }
+
+        void OpenTypeAssign(DirNode dn)
+        {
+            using (var dlg = new TypeAssignForm(dn.FullPath, dn.Name))
+            {
+                if (dlg.ShowDialog(FindForm()) != DialogResult.OK) return;
+                if (dlg.Changed > 0) ReloadAll();
+            }
         }
 
         void OpenAdoptNew()

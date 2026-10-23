@@ -10,7 +10,7 @@ namespace HashDoc
     public static class Db
     {
         /// <summary>当前程序支持的库结构版本。新版本改表时 +1，并在 InitSchema 里补一段迁移。</summary>
-        public const int SchemaVersion = 3;
+        public const int SchemaVersion = 4;
 
         static readonly object _lock = new object();
         static SQLiteConnection _conn;
@@ -32,6 +32,15 @@ namespace HashDoc
             _conn = new SQLiteConnection("Data Source=" + DbPath + ";Version=3;");
             _conn.Open();
             Exec("PRAGMA busy_timeout=3000");
+            // 几万档案规模下的常规调优：WAL 减少写放大，加大页缓存，临时结果放内存
+            try
+            {
+                Exec("PRAGMA journal_mode=WAL");
+                Exec("PRAGMA synchronous=NORMAL");
+                Exec("PRAGMA cache_size=-16000");   // ~16MB
+                Exec("PRAGMA temp_store=MEMORY");
+            }
+            catch { }   // 老文件系统不支持 WAL 时静默退回默认日志模式
             try
             {
                 InitSchema();
@@ -161,6 +170,11 @@ namespace HashDoc
     SortOrder  INTEGER,
     Remark     TEXT)");
 
+            // 目录快照（v4）：目录路径 → 修改时间，用于启动时的增量检查剪枝
+            Exec(@"CREATE TABLE IF NOT EXISTS DirState(
+    DirPath TEXT PRIMARY KEY,
+    MTime   TEXT NOT NULL)");
+
             if (ver < 1) { Exec("PRAGMA user_version=1"); ver = 1; }
             if (ver < 2)
             {
@@ -173,6 +187,14 @@ namespace HashDoc
                 // v2 → v3：档案加 BMG 号（单值可维护字段，允许为空）
                 MigrateAddBmgNo();
                 Exec("PRAGMA user_version=3");
+            }
+            if (ver < 4)
+            {
+                // v3 → v4：目录快照表（无存量数据要搬，建表即可）
+                Exec(@"CREATE TABLE IF NOT EXISTS DirState(
+    DirPath TEXT PRIMARY KEY,
+    MTime   TEXT NOT NULL)");
+                Exec("PRAGMA user_version=4");
             }
 
             DictRepo.SeedDocTypes();
@@ -195,11 +217,18 @@ namespace HashDoc
             return false;
         }
 
+        /// <summary>把 WAL 日志合回主库。在线备份前调用，保证备份出的单文件是完整的。</summary>
+        public static void Checkpoint()
+        {
+            try { Exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { }
+        }
+
         /// <summary>结构升级前整份备份旧库到 data\backup\（用 SQLite 在线备份，程序正开着也安全）。</summary>
         static void BackupBeforeUpgrade(long fromVer)
         {
             try
             {
+                Checkpoint();
                 string dir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(DbPath)), "backup");
                 Directory.CreateDirectory(dir);
                 string dest = Path.Combine(dir,
